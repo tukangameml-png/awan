@@ -266,7 +266,8 @@ async function handleHttpSession(request) {
   try {
     const { connect } = await import('cloudflare:sockets');
     tcp = await connectWithFallback(connect, header.host.replace(/^\[|\]$/g, ''), header.port);
-  } catch { return new Response('connect failed', { status: 502 }); }
+    logLine('post connected to ' + header.host + ':' + header.port);
+  } catch (e) { logLine('post connect fail ' + header.host + ':' + header.port + ' ' + (e && e.message ? String(e.message).slice(0,120) : 'unknown')); return new Response('connect failed', { status: 502 }); }
   const writer = tcp.writable.getWriter();
   const grpcMode = request.headers.get('Content-Type') === 'application/grpc';
   // Sisa buffer VLESS setelah header (firstPayload) + sisa raw yang belum diproses:
