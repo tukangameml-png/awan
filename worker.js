@@ -235,32 +235,40 @@ async function handleHttpSession(request) {
   let vlessBuf = null; // buffer VLESS setelah strip frame gRPC (kalau ada)
   // Fungsi: dari raw buffer, coba ekstrak buffer VLESS (strip 1 frame gRPC kalau lengkap,
   // kalau frame belum lengkap, kembalikan null = tunggu data lagi; kalau bukan frame gRPC, pakai raw apa adanya)
-  const extractVlessBuf = (r) => {
-    if (r.length >= 5 && r[0] === 0 && r[1] === 0 && r[2] === 0 && r[3] === 0) {
-      const len = (r[4] | 0);
-      // Frame gRPC valid hanya kalau panjangnya masuk akal dan frame-nya lengkap atau
-      // setidaknya header VLESS sudah lengkap di dalam frame (frame bisa lebih panjang dari chunk pertama)
-      if (len > 0 && r.length >= 5 + len) return r.slice(5);
-      if (len > 0 && r.length >= 5 + 18) {
-        // Frame belum lengkap tapi VLESS header sudah ada di dalamnya: strip header frame saja
-        return r.slice(5);
-      }
-      return null; // frame belum lengkap, tunggu data lagi
+  const grpcModeHeader = (request.headers.get('Content-Type') || '').includes('grpc');
+  // De-frame gRPC: kembalikan {payload, rest} di mana payload = gabungan payload frame lengkap,
+  // rest = sisa frame tak lengkap (atau buffer mentah kalau bukan gRPC). Panjang frame = 4 byte BE.
+  const deframe = (r) => {
+    if (!grpcModeHeader) return { payload: r, rest: new Uint8Array(0) };
+    let payloadParts = [], total = 0, pos = 0;
+    while (r.length - pos >= 5) {
+      if (r[pos] !== 0) break;
+      const len = ((r[pos+1] << 24) | (r[pos+2] << 16) | (r[pos+3] << 8) | r[pos+4]) >>> 0;
+      if (len > 16777216) break;
+      if (r.length - pos < 5 + len) break;
+      payloadParts.push(r.slice(pos+5, pos+5+len)); total += len; pos += 5 + len;
     }
-    return r;
+    let payload = new Uint8Array(total);
+    let o = 0; for (const c of payloadParts) { payload.set(c, o); o += c.length; }
+    return { payload, rest: r.slice(pos) };
   };
+  let acc = new Uint8Array(0);
   while (!header) {
     const r = await reader.read();
     if (r.done) return new Response('incomplete vless header', { status: 400 });
     const merged = new Uint8Array(raw.length + r.value.length);
     merged.set(raw, 0); merged.set(r.value, raw.length); raw = merged;
-    const vb = extractVlessBuf(raw);
-    if (vb === null) continue;
-    vlessBuf = vb;
+    const df = deframe(raw);
+    if (df.payload.length) {
+      const nm = new Uint8Array(acc.length + df.payload.length);
+      nm.set(acc, 0); nm.set(df.payload, acc.length); acc = nm;
+    }
+    raw = df.rest;
+    if (!acc.length) continue;
+    vlessBuf = acc;
     const h = parseVless(vlessBuf, want);
     if (h) header = h;
     else if (vlessBuf.length > 2048) return new Response('bad vless header', { status: 403 });
-    // kalau belum cukup, loop baca chunk berikutnya (raw tetap terakumulasi, extract diulang)
   }
   let tcp;
   try {
@@ -269,7 +277,7 @@ async function handleHttpSession(request) {
     logLine('post connected to ' + header.host + ':' + header.port);
   } catch (e) { logLine('post connect fail ' + header.host + ':' + header.port + ' ' + (e && e.message ? String(e.message).slice(0,120) : 'unknown')); return new Response('connect failed', { status: 502 }); }
   const writer = tcp.writable.getWriter();
-  const grpcMode = request.headers.get('Content-Type') === 'application/grpc';
+  const grpcMode = (request.headers.get('Content-Type') || '').includes('grpc');
   // Sisa buffer VLESS setelah header (firstPayload) + sisa raw yang belum diproses:
   // raw sudah termasuk frame gRPC pertama; firstPayload dari parse adalah data setelah header VLESS.
   // Untuk arah naik berikutnya, kita proses chunk baru dengan strip frame yang sama (akumulasi).
@@ -289,8 +297,9 @@ async function handleHttpSession(request) {
           let buf2 = pending;
           let collected = [];
           let total = 0;
-          while (buf2.length >= 5 && buf2[0] === 0 && buf2[1] === 0 && buf2[2] === 0 && buf2[3] === 0) {
-            const len = buf2[4];
+          while (buf2.length >= 5 && buf2[0] === 0) {
+            const len = ((buf2[1] << 24) | (buf2[2] << 16) | (buf2[3] << 8) | buf2[4]) >>> 0;
+            if (len > 16777216) break;
             if (buf2.length < 5 + len) break;
             collected.push(buf2.slice(5, 5 + len)); total += len; buf2 = buf2.slice(5 + len);
           }
