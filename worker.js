@@ -189,11 +189,12 @@ async function handleWsSession(ws) {
     if (closed) return;
     const data = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : new Uint8Array(await event.data.arrayBuffer());
     if (!connected) {
+      console.log('ws first msg len ' + data.length);
       try {
         const h = parseVless(data, want);
         if (!h) { console.error('ws vless parse fail'); closeAll(); return; }
         const { connect } = await import('cloudflare:sockets');
-        tcp = await connectWithFallback(connect, h.host.replace(/^\[|\]$/g, ''), h.port);
+        try { tcp = await connectWithFallback(connect, h.host.replace(/^\[|\]$/g, ''), h.port); console.log('ws connected to ' + h.host + ':' + h.port); } catch (ce) { console.error('ws connect fail ' + h.host + ':' + h.port + ' ' + (ce && ce.message ? String(ce.message).slice(0,120) : 'unknown')); throw ce; }
         writer = tcp.writable.getWriter();
         connected = true;
         const reader = tcp.readable.getReader();
