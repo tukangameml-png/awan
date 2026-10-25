@@ -235,7 +235,7 @@ async function handleHttpSession(request) {
   let vlessBuf = null; // buffer VLESS setelah strip frame gRPC (kalau ada)
   // Fungsi: dari raw buffer, coba ekstrak buffer VLESS (strip 1 frame gRPC kalau lengkap,
   // kalau frame belum lengkap, kembalikan null = tunggu data lagi; kalau bukan frame gRPC, pakai raw apa adanya)
-  const grpcModeHeader = (request.headers.get('Content-Type') || '').includes('grpc');
+  const grpcModeHeader = false; // XHTTP body is raw VLESS, Content-Type grpc is camouflage only
   // De-frame gRPC: kembalikan {payload, rest} di mana payload = gabungan payload frame lengkap,
   // rest = sisa frame tak lengkap (atau buffer mentah kalau bukan gRPC). Panjang frame = 4 byte BE.
   const deframe = (r) => {
@@ -277,7 +277,7 @@ async function handleHttpSession(request) {
     logLine('post connected to ' + header.host + ':' + header.port);
   } catch (e) { logLine('post connect fail ' + header.host + ':' + header.port + ' ' + (e && e.message ? String(e.message).slice(0,120) : 'unknown')); return new Response('connect failed', { status: 502 }); }
   const writer = tcp.writable.getWriter();
-  const grpcMode = (request.headers.get('Content-Type') || '').includes('grpc');
+  const grpcMode = false; // raw, see above
   // Sisa buffer VLESS setelah header (firstPayload) + sisa raw yang belum diproses:
   // raw sudah termasuk frame gRPC pertama; firstPayload dari parse adalah data setelah header VLESS.
   // Untuk arah naik berikutnya, kita proses chunk baru dengan strip frame yang sama (akumulasi).
